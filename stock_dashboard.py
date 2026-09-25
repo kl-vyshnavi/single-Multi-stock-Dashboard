@@ -10,94 +10,44 @@ app = dash.Dash(__name__)
 
 # Layout
 app.layout = html.Div([
-    html.H1(
-        "Single/Multi-Stock Comparison Dashboard",
-        style={
-            'textAlign': 'center',
-            'color': '#ffffff',
-            'margin-bottom': '30px',
-            'font-family': 'Arial'
-        }
-    ),
-
+    html.H1("Single/Multi-Stock Comparison Dashboard",
+            style={'textAlign': 'center', 'color': '#ffffff', 'margin-bottom': '30px', 'font-family':'Arial'}),
     html.Div([
         dcc.Input(
             id='stock-input',
             type='text',
             value='AAPL,MSFT',
             placeholder='Enter Stock Symbols separated by commas',
-            style={
-                'margin-right': '10px',
-                'padding': '10px',
-                'border-radius': '5px',
-                'width': '300px',
-                'border': '1px solid #696FC7',
-                'backgroundColor': '#f0f0f0'
-            }
+            style={'margin-right': '10px', 'padding': '10px', 'border-radius': '5px',
+                   'width': '300px', 'border': '1px solid #696FC7', 'backgroundColor':'#f0f0f0'}
         ),
-
         dcc.DatePickerRange(
             id='date-picker',
             start_date='2023-01-01',
             end_date=date.today().strftime("%Y-%m-%d"),
-            style={
-                'padding': '8px',
-                'border': '1px solid #696FC7',
-                'border-radius': '5px',
-                'backgroundColor': '#f0f0f0'
-            }
+            style={'padding': '8px', 'border': '1px solid #696FC7', 'border-radius': '5px', 'backgroundColor':'#f0f0f0'}
         )
-    ], style={
-        'textAlign': 'center',
-        'margin-bottom': '20px'
-    }),
-
-    dcc.Graph(
-        id='price-graph',
-        style={
-            'height': '400px',
-            'margin': '20px'
-        }
-    ),
-
-    dcc.Graph(
-        id='volume-graph',
-        style={
-            'height': '400px',
-            'margin': '20px'
-        }
-    )
-
-], style={
-    'backgroundColor': '#1f1f1f',
-    'color': 'white',
-    'padding': '20px'
-})
+    ], style={'textAlign': 'center', 'margin-bottom': '20px'}),
+    dcc.Graph(id='price-graph', style={'height': '400px', 'margin': '20px'}),
+    dcc.Graph(id='volume-graph', style={'height': '400px', 'margin': '20px'})
+], style={'backgroundColor': '#1f1f1f', 'color': 'white', 'padding': '20px'})
 
 
 @app.callback(
-    [
-        Output('price-graph', 'figure'),
-        Output('volume-graph', 'figure')
-    ],
-    [
-        Input('stock-input', 'value'),
-        Input('date-picker', 'start_date'),
-        Input('date-picker', 'end_date')
-    ]
+    [Output('price-graph', 'figure'),
+     Output('volume-graph', 'figure')],
+    [Input('stock-input', 'value'),
+     Input('date-picker', 'start_date'),
+     Input('date-picker', 'end_date')]
 )
 def update_graph(stock_input, start_date, end_date):
 
-    symbols = [
-        s.strip().upper()
-        for s in stock_input.split(',')
-        if s.strip()
-    ]
+    symbols = [s.strip().upper() for s in stock_input.split(',') if s.strip()]
 
     price_fig = go.Figure()
     volume_fig = go.Figure()
 
-    colors = ["red", "green", "#3E1E68"]
+    colors = ["red", "green", '#3E1E68']
 
     valid_symbol_found = False
 
@@ -135,18 +85,17 @@ def update_graph(stock_input, start_date, end_date):
             data['Close'] = pd.to_numeric(
                 data[f'Close_{sym}'],
                 errors='coerce'
-            ).ffill()
+            ).fillna(method='ffill')
 
             data['Volume'] = pd.to_numeric(
                 data[f'Volume_{sym}'],
                 errors='coerce'
             ).fillna(0)
 
-            data['SMA50'] = (
-                data['Close']
-                .rolling(window=50, min_periods=1)
-                .mean()
-            )
+            data['SMA50'] = data['Close'].rolling(
+                window=50,
+                min_periods=1
+            ).mean()
 
             color = colors[i % len(colors)]
 
@@ -165,15 +114,11 @@ def update_graph(stock_input, start_date, end_date):
                 y=data['Close'],
                 mode='lines+markers',
                 name=f'{sym} Close',
-                line=dict(
-                    color=color,
-                    width=2
-                ),
+                line=dict(color=color, width=2),
                 hovertemplate=(
                     f"<b>Symbol:</b> {sym}<br>"
                     "<b>Date:</b> %{x|%Y-%m-%d}<br>"
-                    "<b>Close Price:</b> %{y:.2f}"
-                    "<extra></extra>"
+                    "<b>Close Price:</b> %{y:.2f}<extra></extra>"
                 )
             )
         )
@@ -184,17 +129,12 @@ def update_graph(stock_input, start_date, end_date):
                 x=data['Date'],
                 y=data['SMA50'],
                 mode='lines',
-                line=dict(
-                    color=color,
-                    width=2,
-                    dash='dash'
-                ),
+                line=dict(color=color, width=2, dash='dash'),
                 name=f'{sym} 50-day SMA',
                 hovertemplate=(
                     f"<b>Symbol:</b> {sym}<br>"
                     "<b>Date:</b> %{x|%Y-%m-%d}<br>"
-                    "<b>50-day SMA:</b> %{y:.2f}"
-                    "<extra></extra>"
+                    "<b>50-day SMA:</b> %{y:.2f}<extra></extra>"
                 )
             )
         )
@@ -209,20 +149,16 @@ def update_graph(stock_input, start_date, end_date):
                 hovertemplate=(
                     f"<b>Symbol:</b> {sym}<br>"
                     "<b>Date:</b> %{x|%Y-%m-%d}<br>"
-                    "<b>Volume:</b> %{y:,}"
-                    "<extra></extra>"
+                    "<b>Volume:</b> %{y:,}<extra></extra>"
                 )
             )
         )
 
     if not valid_symbol_found:
-
         empty_fig = go.Figure()
-
         empty_fig.update_layout(
             title="No valid data for the entered symbols"
         )
-
         return empty_fig, empty_fig
 
     # Price figure layout
