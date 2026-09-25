@@ -1,15 +1,32 @@
+import os
+import requests
 import dash
 from dash import dcc, html, Input, Output
-import yfinance as yf
 import plotly.graph_objs as go
 from datetime import date
 import pandas as pd
 
-# Initialize app
-app = dash.Dash(__name__)
 
+# ---------------------------------------------------------
+# Initialize app
+# ---------------------------------------------------------
+app = dash.Dash(__name__)
+server = app.server
+
+
+# ---------------------------------------------------------
+# Alpha Vantage API configuration
+# ---------------------------------------------------------
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+
+ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
+
+
+# ---------------------------------------------------------
 # Layout
+# ---------------------------------------------------------
 app.layout = html.Div([
+
     html.H1(
         "Single/Multi-Stock Comparison Dashboard",
         style={
@@ -21,6 +38,7 @@ app.layout = html.Div([
     ),
 
     html.Div([
+
         dcc.Input(
             id='stock-input',
             type='text',
@@ -47,10 +65,10 @@ app.layout = html.Div([
                 'backgroundColor': '#f0f0f0'
             }
         )
-    ], style={
-        'display': 'flex',
-        'justifyContent': 'center',
-        'alignItems': 'center',
+
+    ],
+    style={
+        'textAlign': 'center',
         'margin-bottom': '20px'
     }),
 
@@ -70,18 +88,116 @@ app.layout = html.Div([
         }
     )
 
-], style={
+],
+style={
     'backgroundColor': '#1f1f1f',
     'color': 'white',
     'padding': '20px'
 })
 
 
+# ---------------------------------------------------------
+# Function to get stock data from Alpha Vantage
+# ---------------------------------------------------------
+def get_stock_data(symbol):
+
+    if not ALPHA_VANTAGE_API_KEY:
+        print("ALPHA_VANTAGE_API_KEY is not configured.")
+        return None
+
+    try:
+
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": symbol,
+            "outputsize": "compact",
+            "apikey": ALPHA_VANTAGE_API_KEY
+        }
+
+        response = requests.get(
+            ALPHA_VANTAGE_URL,
+            params=params,
+            timeout=20
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+        # Check for API error
+        if "Error Message" in result:
+            print(f"Invalid symbol: {symbol}")
+            return None
+
+        # Check for API information/rate-limit message
+        if "Information" in result:
+            print(result["Information"])
+            return None
+
+        time_series = result.get("Time Series (Daily)")
+
+        if not time_series:
+            print(f"No data returned for {symbol}")
+            return None
+
+        # Convert JSON to DataFrame
+        data = pd.DataFrame.from_dict(
+            time_series,
+            orient='index'
+        )
+
+        # Rename columns
+        data = data.rename(columns={
+            "1. open": "Open",
+            "2. high": "High",
+            "3. low": "Low",
+            "4. close": "Close",
+            "5. volume": "Volume"
+        })
+
+        # Convert index to Date
+        data.index = pd.to_datetime(data.index)
+
+        data = data.reset_index()
+        data = data.rename(columns={"index": "Date"})
+
+        # Convert numeric columns
+        data["Close"] = pd.to_numeric(
+            data["Close"],
+            errors="coerce"
+        )
+
+        data["Volume"] = pd.to_numeric(
+            data["Volume"],
+            errors="coerce"
+        )
+
+        # Sort by date
+        data = data.sort_values("Date")
+
+        # Remove missing values
+        data = data.dropna(
+            subset=["Close", "Volume"]
+        )
+
+        return data
+
+    except Exception as e:
+
+        print(f"Error fetching {symbol}: {e}")
+
+        return None
+
+
+# ---------------------------------------------------------
+# Callback
+# ---------------------------------------------------------
 @app.callback(
     [
         Output('price-graph', 'figure'),
         Output('volume-graph', 'figure')
     ],
+
     [
         Input('stock-input', 'value'),
         Input('date-picker', 'start_date'),
@@ -90,124 +206,81 @@ app.layout = html.Div([
 )
 def update_graph(stock_input, start_date, end_date):
 
-    symbols = [
-        s.strip().upper()
-        for s in stock_input.split(',')
-        if s.strip()
-    ]
-
     price_fig = go.Figure()
     volume_fig = go.Figure()
 
-    colors = ["red", "green", "#3E1E68"]
+    colors = [
+        "red",
+        "green",
+        "#3E1E68"
+    ]
 
     valid_symbol_found = False
 
-    if not symbols:
+    # -----------------------------------------------------
+    # Check stock input
+    # -----------------------------------------------------
+    if not stock_input:
+
         empty_fig = go.Figure()
+
         empty_fig.update_layout(
-            title="No symbols entered"
+            title="No symbols entered",
+            template="plotly_dark",
+            paper_bgcolor="#1f1f1f",
+            plot_bgcolor="#1f1f1f",
+            font=dict(color="white")
         )
+
         return empty_fig, empty_fig
 
+    # Convert input to symbols
+    symbols = [
+        s.strip().upper()
+        for s in stock_input.split(",")
+        if s.strip()
+    ]
+
+    # -----------------------------------------------------
+    # Process each stock
+    # -----------------------------------------------------
     for i, sym in enumerate(symbols):
 
+        data = get_stock_data(sym)
+
+        if data is None or data.empty:
+            print(f"No valid data for {sym}")
+            continue
+
         try:
-            print(f"Fetching data for {sym}")
-            print(f"Start date: {start_date}")
-            print(f"End date: {end_date}")
 
-            # Download stock data
-            data = yf.download(
-                sym,
-                start=start_date,
-                end=end_date,
-                interval="1d",
-                auto_adjust=False,
-                progress=False
-            )
+            # -------------------------------------------------
+            # Filter according to selected date range
+            # -------------------------------------------------
+            data["Date"] = pd.to_datetime(data["Date"])
 
-            print(f"Downloaded {sym}: {data.shape}")
-            print(f"Columns for {sym}: {data.columns}")
+            if start_date:
+                data = data[
+                    data["Date"] >= pd.to_datetime(start_date)
+                ]
+
+            if end_date:
+                data = data[
+                    data["Date"] <= pd.to_datetime(end_date)
+                ]
 
             if data.empty:
-                print(f"No data returned for {sym}")
+                print(
+                    f"No data available for {sym} "
+                    f"within selected date range."
+                )
                 continue
 
-            # --------------------------------------------------
-            # Handle different yfinance column structures
-            # --------------------------------------------------
-
-            if isinstance(data.columns, pd.MultiIndex):
-
-                # Case 1:
-                # Columns look like:
-                # Close, AAPL
-                # Volume, AAPL
-                if 'Close' in data.columns.get_level_values(0):
-
-                    close_data = data['Close']
-                    volume_data = data['Volume']
-
-                    if isinstance(close_data, pd.DataFrame):
-                        close_data = close_data.iloc[:, 0]
-
-                    if isinstance(volume_data, pd.DataFrame):
-                        volume_data = volume_data.iloc[:, 0]
-
-                # Case 2:
-                # Columns look like:
-                # AAPL, Close
-                # AAPL, Volume
-                else:
-
-                    close_data = data[sym]['Close']
-                    volume_data = data[sym]['Volume']
-
-            else:
-
-                # Normal single-level columns
-                close_data = data['Close']
-                volume_data = data['Volume']
-
-            # Reset index
-            data = data.reset_index()
-
-            # Make sure Date is datetime
-            data['Date'] = pd.to_datetime(data['Date'])
-
-            # Create clean dataframe
-            clean_data = pd.DataFrame({
-                'Date': data['Date'],
-                'Close': pd.to_numeric(
-                    close_data.values,
-                    errors='coerce'
-                ),
-                'Volume': pd.to_numeric(
-                    volume_data.values,
-                    errors='coerce'
-                )
-            })
-
-            # Remove missing close prices
-            clean_data = clean_data.dropna(
-                subset=['Close']
-            )
-
-            # Fill missing volume values
-            clean_data['Volume'] = (
-                clean_data['Volume']
-                .fillna(0)
-            )
-
-            # Sort by date
-            clean_data = clean_data.sort_values(
-                'Date'
-            )
-
+            # -------------------------------------------------
             # Calculate 50-day SMA
-            clean_data['SMA50'] = (
-                clean_data['Close']
+            # -------------------------------------------------
+            data["SMA50"] = (
+                data["Close"]
                 .rolling(
                     window=50,
                     min_periods=1
@@ -215,33 +288,30 @@ def update_graph(stock_input, start_date, end_date):
                 .mean()
             )
 
-            print(
-                f"Successfully processed {sym}: "
-                f"{len(clean_data)} rows"
-            )
-
-            if clean_data.empty:
-                print(f"No valid data for {sym}")
-                continue
-
             color = colors[i % len(colors)]
 
             valid_symbol_found = True
 
-            # --------------------------------------------------
-            # PRICE GRAPH
-            # --------------------------------------------------
+            print(
+                f"Fetched {sym}: "
+                f"{len(data)} rows"
+            )
 
+            # -------------------------------------------------
+            # Price line
+            # -------------------------------------------------
             price_fig.add_trace(
                 go.Scatter(
-                    x=clean_data['Date'],
-                    y=clean_data['Close'],
-                    mode='lines+markers',
-                    name=f'{sym} Close',
+                    x=data["Date"],
+                    y=data["Close"],
+                    mode="lines+markers",
+                    name=f"{sym} Close",
+
                     line=dict(
                         color=color,
                         width=2
                     ),
+
                     hovertemplate=(
                         f"<b>Symbol:</b> {sym}<br>"
                         "<b>Date:</b> %{x|%Y-%m-%d}<br>"
@@ -251,21 +321,23 @@ def update_graph(stock_input, start_date, end_date):
                 )
             )
 
-            # --------------------------------------------------
-            # SMA GRAPH
-            # --------------------------------------------------
-
+            # -------------------------------------------------
+            # SMA line
+            # -------------------------------------------------
             price_fig.add_trace(
                 go.Scatter(
-                    x=clean_data['Date'],
-                    y=clean_data['SMA50'],
-                    mode='lines',
-                    name=f'{sym} 50-day SMA',
+                    x=data["Date"],
+                    y=data["SMA50"],
+                    mode="lines",
+
                     line=dict(
                         color=color,
                         width=2,
-                        dash='dash'
+                        dash="dash"
                     ),
+
+                    name=f"{sym} 50-day SMA",
+
                     hovertemplate=(
                         f"<b>Symbol:</b> {sym}<br>"
                         "<b>Date:</b> %{x|%Y-%m-%d}<br>"
@@ -275,16 +347,18 @@ def update_graph(stock_input, start_date, end_date):
                 )
             )
 
-            # --------------------------------------------------
-            # VOLUME GRAPH
-            # --------------------------------------------------
-
+            # -------------------------------------------------
+            # Volume bars
+            # -------------------------------------------------
             volume_fig.add_trace(
                 go.Bar(
-                    x=clean_data['Date'],
-                    y=clean_data['Volume'],
+                    x=data["Date"],
+                    y=data["Volume"],
+
                     marker_color=color,
-                    name=f'{sym} Volume',
+
+                    name=f"{sym} Volume",
+
                     hovertemplate=(
                         f"<b>Symbol:</b> {sym}<br>"
                         "<b>Date:</b> %{x|%Y-%m-%d}<br>"
@@ -297,72 +371,76 @@ def update_graph(stock_input, start_date, end_date):
         except Exception as e:
 
             print(
-                f"ERROR while processing {sym}: "
-                f"{type(e).__name__}: {e}"
+                f"Error processing {sym}: {e}"
             )
 
             continue
 
-    # --------------------------------------------------
-    # NO VALID DATA
-    # --------------------------------------------------
-
+    # ---------------------------------------------------------
+    # No valid stock
+    # ---------------------------------------------------------
     if not valid_symbol_found:
 
         empty_fig = go.Figure()
 
-        empty_fig.add_annotation(
-            text=(
-                "No valid stock data found.<br>"
-                "Check the stock symbol or date range."
-            ),
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(size=18)
-        )
-
         empty_fig.update_layout(
-            title="Unable to load stock data"
+            title="No valid data for the entered symbols",
+            template="plotly_dark",
+            paper_bgcolor="#1f1f1f",
+            plot_bgcolor="#1f1f1f",
+            font=dict(color="white")
         )
 
         return empty_fig, empty_fig
 
-    # --------------------------------------------------
-    # PRICE FIGURE LAYOUT
-    # --------------------------------------------------
-
+    # ---------------------------------------------------------
+    # Price figure layout
+    # ---------------------------------------------------------
     price_fig.update_layout(
+
         title="Stock Price Comparison with 50-day SMA",
+
         xaxis_title="Date",
+
         yaxis_title="Price",
-        template='plotly_dark',
-        paper_bgcolor='#1f1f1f',
-        plot_bgcolor='#1f1f1f',
-        font=dict(color='white'),
-        hovermode='x unified'
+
+        template="plotly_dark",
+
+        paper_bgcolor="#1f1f1f",
+
+        plot_bgcolor="#1f1f1f",
+
+        font=dict(
+            color="white"
+        ),
+
+        hovermode="x unified"
     )
 
-    # --------------------------------------------------
-    # VOLUME FIGURE LAYOUT
-    # --------------------------------------------------
-
+    # ---------------------------------------------------------
+    # Volume figure layout
+    # ---------------------------------------------------------
     volume_fig.update_layout(
+
         title="Stock Volume Comparison",
+
         xaxis_title="Date",
+
         yaxis_title="Volume",
-        barmode='group',
-        template='plotly_dark',
-        paper_bgcolor='#1f1f1f',
-        plot_bgcolor='#1f1f1f',
-        font=dict(color='white'),
-        hovermode='x unified'
+
+        barmode="group",
+
+        template="plotly_dark",
+
+        paper_bgcolor="#1f1f1f",
+
+        plot_bgcolor="#1f1f1f",
+
+        font=dict(
+            color="white"
+        ),
+
+        hovermode="x unified"
     )
 
     return price_fig, volume_fig
-
-
-# Render deployment
-server = app.server
