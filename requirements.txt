@@ -1,5 +1,5 @@
 dash==3.2.0
-yfinance==0.2.66
 plotly==6.3.0
 pandas==2.3.2
-gunicorn
+requests==2.32.5
+gunicorn==23.0.0
