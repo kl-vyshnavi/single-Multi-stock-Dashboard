@@ -72,8 +72,7 @@ app.layout = html.Div([
             }
         )
 
-    ],
-    style={
+    ], style={
         'textAlign': 'center',
         'margin-bottom': '20px'
     }),
@@ -94,12 +93,36 @@ app.layout = html.Div([
         }
     )
 
-],
-style={
+], style={
     'backgroundColor': '#1f1f1f',
     'color': 'white',
     'padding': '20px'
 })
+
+
+# =========================================================
+# Helper Function - Empty/Error Figure
+# =========================================================
+
+def create_message_figure(message):
+
+    fig = go.Figure()
+
+    fig.update_layout(
+        title=message,
+        template='plotly_dark',
+        paper_bgcolor='#1f1f1f',
+        plot_bgcolor='#1f1f1f',
+        font=dict(color='white'),
+        xaxis=dict(
+            visible=False
+        ),
+        yaxis=dict(
+            visible=False
+        )
+    )
+
+    return fig
 
 
 # =========================================================
@@ -109,13 +132,20 @@ style={
 @lru_cache(maxsize=100)
 def get_stock_data(symbol, start_date, end_date):
 
+    # ---------------------------------------------------------
+    # Check API key
+    # ---------------------------------------------------------
+
     if not TWELVE_DATA_API_KEY:
 
-        print("ERROR: TWELVE_DATA_API_KEY is not configured.")
+        return None, "ERROR: TWELVE_DATA_API_KEY is missing in Render."
 
-        return None
 
     try:
+
+        # -----------------------------------------------------
+        # API parameters
+        # -----------------------------------------------------
 
         params = {
             "symbol": symbol,
@@ -125,64 +155,127 @@ def get_stock_data(symbol, start_date, end_date):
             "apikey": TWELVE_DATA_API_KEY
         }
 
+
+        # -----------------------------------------------------
+        # Send request
+        # -----------------------------------------------------
+
         response = requests.get(
             TWELVE_DATA_URL,
             params=params,
             timeout=30
         )
 
-        # Check HTTP status
-        response.raise_for_status()
 
-        result = response.json()
+        # -----------------------------------------------------
+        # Print useful debugging information in Render logs
+        # -----------------------------------------------------
 
-        # -------------------------------------------------
-        # Check API error
-        # -------------------------------------------------
+        print("---------------------------------------------")
+        print("Twelve Data request for:", symbol)
+        print("HTTP status:", response.status_code)
+        print("Response:", response.text[:1000])
+        print("---------------------------------------------")
 
-        if "status" in result and result["status"] == "error":
 
-            print(
-                f"Twelve Data error for {symbol}: "
-                f"{result.get('message', 'Unknown API error')}"
+        # -----------------------------------------------------
+        # Convert response to JSON
+        # -----------------------------------------------------
+
+        try:
+
+            result = response.json()
+
+        except ValueError:
+
+            return None, (
+                f"Twelve Data returned invalid JSON "
+                f"(HTTP {response.status_code})."
             )
 
-            return None
 
-        # -------------------------------------------------
-        # Check for API message/error
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # Handle HTTP/API errors
+        # -----------------------------------------------------
+
+        if response.status_code != 200:
+
+            error_code = result.get(
+                "code",
+                response.status_code
+            )
+
+            error_message = result.get(
+                "message",
+                "Unknown API error"
+            )
+
+            return None, (
+                f"Twelve Data Error {error_code}: "
+                f"{error_message}"
+            )
+
+
+        # -----------------------------------------------------
+        # Handle API status error
+        # -----------------------------------------------------
+
+        if result.get("status") == "error":
+
+            error_code = result.get(
+                "code",
+                "Unknown"
+            )
+
+            error_message = result.get(
+                "message",
+                "Unknown API error"
+            )
+
+            return None, (
+                f"Twelve Data Error {error_code}: "
+                f"{error_message}"
+            )
+
+
+        # -----------------------------------------------------
+        # Handle response containing code + message
+        # -----------------------------------------------------
 
         if "code" in result and "message" in result:
 
-            print(
-                f"Twelve Data error for {symbol}: "
+            return None, (
+                f"Twelve Data Error "
+                f"{result.get('code')}: "
                 f"{result.get('message')}"
             )
 
-            return None
 
-        # -------------------------------------------------
-        # Get values
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # Extract values
+        # -----------------------------------------------------
 
         values = result.get("values")
 
+
         if not values:
 
-            print(f"No data returned for {symbol}")
+            return None, (
+                f"No historical data returned for {symbol} "
+                f"between {start_date} and {end_date}."
+            )
 
-            return None
 
-        # -------------------------------------------------
-        # Convert JSON to DataFrame
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # Convert to DataFrame
+        # -----------------------------------------------------
 
         data = pd.DataFrame(values)
 
-        # -------------------------------------------------
+
+        # -----------------------------------------------------
         # Rename columns
-        # -------------------------------------------------
+        # -----------------------------------------------------
 
         data = data.rename(columns={
             "datetime": "Date",
@@ -193,28 +286,46 @@ def get_stock_data(symbol, start_date, end_date):
             "volume": "Volume"
         })
 
-        # -------------------------------------------------
-        # Convert data types
-        # -------------------------------------------------
+
+        # -----------------------------------------------------
+        # Convert Date
+        # -----------------------------------------------------
 
         data["Date"] = pd.to_datetime(
             data["Date"],
             errors="coerce"
         )
 
+
+        # -----------------------------------------------------
+        # Convert Close
+        # -----------------------------------------------------
+
         data["Close"] = pd.to_numeric(
             data["Close"],
             errors="coerce"
         )
 
-        data["Volume"] = pd.to_numeric(
-            data["Volume"],
-            errors="coerce"
-        )
 
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # Convert Volume
+        # -----------------------------------------------------
+
+        if "Volume" in data.columns:
+
+            data["Volume"] = pd.to_numeric(
+                data["Volume"],
+                errors="coerce"
+            )
+
+        else:
+
+            data["Volume"] = 0
+
+
+        # -----------------------------------------------------
         # Remove invalid rows
-        # -------------------------------------------------
+        # -----------------------------------------------------
 
         data = data.dropna(
             subset=[
@@ -223,56 +334,84 @@ def get_stock_data(symbol, start_date, end_date):
             ]
         )
 
-        # -------------------------------------------------
-        # Sort oldest → newest
-        # -------------------------------------------------
+
+        # -----------------------------------------------------
+        # Sort by Date
+        # -----------------------------------------------------
 
         data = data.sort_values(
             "Date"
         )
 
+
         data = data.reset_index(
             drop=True
         )
 
+
+        # -----------------------------------------------------
+        # Check final data
+        # -----------------------------------------------------
+
         if data.empty:
 
-            print(
-                f"No valid data available for {symbol}"
+            return None, (
+                f"No usable data returned for {symbol}."
             )
 
-            return None
 
         print(
-            f"Fetched {symbol}: "
-            f"{len(data)} rows"
+            f"SUCCESS: {symbol} -> "
+            f"{len(data)} rows received."
         )
 
-        return data
+
+        return data, None
+
+
+    # =========================================================
+    # Request Timeout
+    # =========================================================
 
     except requests.exceptions.Timeout:
 
-        print(
-            f"Timeout while fetching {symbol}"
+        return None, (
+            f"Request timed out while fetching {symbol}."
         )
 
-        return None
+
+    # =========================================================
+    # Connection Error
+    # =========================================================
+
+    except requests.exceptions.ConnectionError:
+
+        return None, (
+            f"Could not connect to Twelve Data "
+            f"while fetching {symbol}."
+        )
+
+
+    # =========================================================
+    # Other Request Error
+    # =========================================================
 
     except requests.exceptions.RequestException as e:
 
-        print(
-            f"Network error while fetching {symbol}: {e}"
+        return None, (
+            f"Request error for {symbol}: {str(e)}"
         )
 
-        return None
+
+    # =========================================================
+    # Any Other Error
+    # =========================================================
 
     except Exception as e:
 
-        print(
-            f"Unexpected error while fetching {symbol}: {e}"
+        return None, (
+            f"Unexpected error for {symbol}: {str(e)}"
         )
-
-        return None
 
 
 # =========================================================
@@ -316,12 +455,17 @@ def update_graph(
 ):
 
     # =====================================================
-    # Create empty figures
+    # Create Figures
     # =====================================================
 
     price_fig = go.Figure()
 
     volume_fig = go.Figure()
+
+
+    # =====================================================
+    # Colors
+    # =====================================================
 
     colors = [
         "red",
@@ -329,30 +473,22 @@ def update_graph(
         "#3E1E68"
     ]
 
-    valid_symbol_found = False
 
     # =====================================================
-    # Check stock input
+    # Check Stock Input
     # =====================================================
 
     if not stock_input:
 
-        empty_fig = go.Figure()
-
-        empty_fig.update_layout(
-            title="No symbols entered",
-            template="plotly_dark",
-            paper_bgcolor="#1f1f1f",
-            plot_bgcolor="#1f1f1f",
-            font=dict(
-                color="white"
-            )
+        empty_fig = create_message_figure(
+            "No symbols entered"
         )
 
         return empty_fig, empty_fig
 
+
     # =====================================================
-    # Convert input into symbols
+    # Convert Input into Symbols
     # =====================================================
 
     symbols = [
@@ -361,13 +497,15 @@ def update_graph(
         if s.strip()
     ]
 
+
     # =====================================================
-    # Make sure dates exist
+    # Default Dates
     # =====================================================
 
     if not start_date:
 
         start_date = "2023-01-01"
+
 
     if not end_date:
 
@@ -375,47 +513,64 @@ def update_graph(
             "%Y-%m-%d"
         )
 
+
     # =====================================================
-    # Process every stock symbol
+    # Track Valid Data
+    # =====================================================
+
+    valid_symbol_found = False
+
+    errors = []
+
+
+    # =====================================================
+    # Process Every Stock
     # =====================================================
 
     for i, sym in enumerate(symbols):
 
         # -------------------------------------------------
-        # Get data
+        # Get Data
         # -------------------------------------------------
 
-        data = get_stock_data(
+        data, error_message = get_stock_data(
             sym,
             start_date,
             end_date
         )
 
+
+        # -------------------------------------------------
+        # Handle Error
+        # -------------------------------------------------
+
         if data is None:
 
             print(
-                f"No valid data for {sym}"
+                f"{sym}: {error_message}"
+            )
+
+            errors.append(
+                f"{sym}: {error_message}"
             )
 
             continue
 
-        if data.empty:
-
-            print(
-                f"Empty data for {sym}"
-            )
-
-            continue
 
         try:
 
             # -------------------------------------------------
-            # Ensure date range
+            # Make sure Date is datetime
             # -------------------------------------------------
 
             data["Date"] = pd.to_datetime(
                 data["Date"]
             )
+
+
+            # -------------------------------------------------
+            # Filter Date Range
+            # -------------------------------------------------
 
             data = data[
                 (data["Date"] >= pd.to_datetime(start_date))
@@ -423,30 +578,23 @@ def update_graph(
                 (data["Date"] <= pd.to_datetime(end_date))
             ]
 
+
+            # -------------------------------------------------
+            # Check Data
+            # -------------------------------------------------
+
             if data.empty:
 
-                print(
-                    f"No data for {sym} "
-                    f"inside selected date range."
+                errors.append(
+                    f"{sym}: No trading data "
+                    f"for selected dates."
                 )
 
                 continue
 
-            # -------------------------------------------------
-            # Fill volume
-            # -------------------------------------------------
-
-            if "Volume" not in data.columns:
-
-                data["Volume"] = 0
-
-            data["Volume"] = pd.to_numeric(
-                data["Volume"],
-                errors="coerce"
-            ).fillna(0)
 
             # -------------------------------------------------
-            # Calculate 50-day SMA
+            # Calculate 50-Day SMA
             # -------------------------------------------------
 
             data["SMA50"] = (
@@ -458,15 +606,24 @@ def update_graph(
                 .mean()
             )
 
+
             # -------------------------------------------------
-            # Select color
+            # Select Color
             # -------------------------------------------------
 
             color = colors[
                 i % len(colors)
             ]
 
+
             valid_symbol_found = True
+
+
+            print(
+                f"Processing {sym}: "
+                f"{len(data)} rows"
+            )
+
 
             # =================================================
             # PRICE GRAPH
@@ -495,6 +652,7 @@ def update_graph(
                     )
                 )
             )
+
 
             # =================================================
             # 50-DAY SMA
@@ -525,6 +683,7 @@ def update_graph(
                 )
             )
 
+
             # =================================================
             # VOLUME GRAPH
             # =================================================
@@ -548,48 +707,53 @@ def update_graph(
                 )
             )
 
+
         except Exception as e:
 
-            print(
-                f"Error processing {sym}: {e}"
+            errors.append(
+                f"{sym}: Error processing data - {str(e)}"
             )
 
-            continue
+            print(
+                f"{sym}: Error processing data - {str(e)}"
+            )
+
 
     # =====================================================
-    # No valid data
+    # No Valid Data
     # =====================================================
 
     if not valid_symbol_found:
 
-        empty_fig = go.Figure()
+        if errors:
 
-        empty_fig.update_layout(
-            title="No valid data for the entered symbols",
+            error_text = "<br>".join(errors)
 
-            template="plotly_dark",
+        else:
 
-            paper_bgcolor="#1f1f1f",
-
-            plot_bgcolor="#1f1f1f",
-
-            font=dict(
-                color="white"
+            error_text = (
+                "No valid data for the entered symbols."
             )
+
+
+        price_error = create_message_figure(
+            error_text
         )
 
-        return empty_fig, empty_fig
+        volume_error = create_message_figure(
+            error_text
+        )
+
+        return price_error, volume_error
+
 
     # =====================================================
-    # PRICE FIGURE LAYOUT
+    # Price Figure Layout
     # =====================================================
 
     price_fig.update_layout(
 
-        title=(
-            "Stock Price Comparison "
-            "with 50-day SMA"
-        ),
+        title="Stock Price Comparison with 50-day SMA",
 
         xaxis_title="Date",
 
@@ -608,8 +772,9 @@ def update_graph(
         hovermode="x unified"
     )
 
+
     # =====================================================
-    # VOLUME FIGURE LAYOUT
+    # Volume Figure Layout
     # =====================================================
 
     volume_fig.update_layout(
@@ -635,11 +800,16 @@ def update_graph(
         hovermode="x unified"
     )
 
+
+    # =====================================================
+    # Return Graphs
+    # =====================================================
+
     return price_fig, volume_fig
 
 
 # =========================================================
-# Local Development
+# Run Application
 # =========================================================
 
 if __name__ == "__main__":
