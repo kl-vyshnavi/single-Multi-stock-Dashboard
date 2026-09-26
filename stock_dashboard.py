@@ -7,11 +7,17 @@ import pandas as pd
 from functools import lru_cache
 
 
-# Initialize app
+# =========================================================
+# INITIALIZE APP
+# =========================================================
+
 app = dash.Dash(__name__)
 
 
-# Layout
+# =========================================================
+# LAYOUT
+# =========================================================
+
 app.layout = html.Div([
     html.H1(
         "Single/Multi-Stock Comparison Dashboard",
@@ -89,17 +95,44 @@ def download_stock_data(symbol, start_date, end_date):
 
     try:
 
+        print("=" * 60)
+        print(f"Downloading data for: {symbol}")
+        print(f"Start date: {start_date}")
+        print(f"End date: {end_date}")
+        print("=" * 60)
+
+        # -------------------------------------------------
+        # Make the selected end date inclusive
+        # -------------------------------------------------
+
+        end_date_obj = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+
+        end_date_inclusive = end_date_obj.strftime("%Y-%m-%d")
+
+        # -------------------------------------------------
+        # Download stock data
+        # -------------------------------------------------
+
         data = yf.download(
             symbol,
             start=start_date,
-            end=end_date,
+            end=end_date_inclusive,
             interval="1d",
             auto_adjust=False,
             progress=False,
             threads=False
         )
 
+        print(f"Raw data shape for {symbol}: {data.shape}")
+
+        # -------------------------------------------------
+        # Check whether data was returned
+        # -------------------------------------------------
+
         if data.empty:
+
+            print(f"No data returned for {symbol}")
+
             return None
 
         # -------------------------------------------------
@@ -108,8 +141,19 @@ def download_stock_data(symbol, start_date, end_date):
 
         if isinstance(data.columns, pd.MultiIndex):
 
-            # For a single ticker, extract the ticker level
+            print(f"MultiIndex detected for {symbol}")
+            print(f"Original columns: {data.columns}")
+
             try:
+
+                # yfinance may return:
+                #
+                # Close     AAPL
+                # Open      AAPL
+                # High      AAPL
+                #
+                # Extract the ticker level.
+
                 if symbol in data.columns.get_level_values(-1):
 
                     data = data.xs(
@@ -118,10 +162,22 @@ def download_stock_data(symbol, start_date, end_date):
                         level=-1
                     )
 
+                    print(
+                        f"Extracted ticker level for {symbol}"
+                    )
+
                 else:
+
+                    # If ticker is not found in the last level,
+                    # use the first level.
+
                     data.columns = data.columns.get_level_values(0)
 
-            except Exception:
+            except Exception as e:
+
+                print(
+                    f"MultiIndex processing error for {symbol}: {e}"
+                )
 
                 data.columns = data.columns.get_level_values(0)
 
@@ -138,33 +194,81 @@ def download_stock_data(symbol, start_date, end_date):
         if 'Date' not in data.columns:
 
             if 'Datetime' in data.columns:
+
                 data.rename(
                     columns={'Datetime': 'Date'},
                     inplace=True
                 )
+
             else:
+
+                print(
+                    f"Date column missing for {symbol}"
+                )
+
+                print(
+                    f"Available columns: {data.columns}"
+                )
+
                 return None
 
+        # -------------------------------------------------
+        # Convert Date
+        # -------------------------------------------------
+
         data['Date'] = pd.to_datetime(
-            data['Date']
+            data['Date'],
+            errors='coerce'
         )
+
+        # Remove invalid dates
+
+        data = data.dropna(
+            subset=['Date']
+        )
+
+        # -------------------------------------------------
+        # Sort by date
+        # -------------------------------------------------
 
         data = data.sort_values(
             'Date'
         )
 
         # -------------------------------------------------
-        # Make sure Close and Volume exist
+        # Check Close column
         # -------------------------------------------------
 
         if 'Close' not in data.columns:
-            return None
 
-        if 'Volume' not in data.columns:
+            print(
+                f"Close column missing for {symbol}"
+            )
+
+            print(
+                f"Available columns: {data.columns}"
+            )
+
             return None
 
         # -------------------------------------------------
-        # Convert Close
+        # Check Volume column
+        # -------------------------------------------------
+
+        if 'Volume' not in data.columns:
+
+            print(
+                f"Volume column missing for {symbol}"
+            )
+
+            print(
+                f"Available columns: {data.columns}"
+            )
+
+            return None
+
+        # -------------------------------------------------
+        # Convert Close to numeric
         # -------------------------------------------------
 
         data['Close'] = pd.to_numeric(
@@ -172,16 +276,20 @@ def download_stock_data(symbol, start_date, end_date):
             errors='coerce'
         )
 
+        # Fill missing Close values
+
         data['Close'] = data['Close'].ffill()
 
         # -------------------------------------------------
-        # Convert Volume
+        # Convert Volume to numeric
         # -------------------------------------------------
 
         data['Volume'] = pd.to_numeric(
             data['Volume'],
             errors='coerce'
         )
+
+        # Fill missing Volume values
 
         data['Volume'] = data['Volume'].fillna(0)
 
@@ -194,12 +302,40 @@ def download_stock_data(symbol, start_date, end_date):
             min_periods=1
         ).mean()
 
+        # -------------------------------------------------
+        # Final check
+        # -------------------------------------------------
+
+        if data.empty:
+
+            print(
+                f"Data became empty after processing {symbol}"
+            )
+
+            return None
+
+        print(
+            f"SUCCESS: Fetched {symbol}: {len(data)} rows"
+        )
+
+        print(
+            f"Final columns: {list(data.columns)}"
+        )
+
         return data
 
     except Exception as e:
 
         print(
-            f"Error fetching {symbol}: {e}"
+            f"ERROR fetching {symbol}"
+        )
+
+        print(
+            f"Error type: {type(e).__name__}"
+        )
+
+        print(
+            f"Error message: {e}"
         )
 
         return None
@@ -236,6 +372,24 @@ def update_graph(
 
         empty_fig.update_layout(
             title="No symbols entered",
+            template='plotly_dark',
+            paper_bgcolor='#1f1f1f',
+            plot_bgcolor='#1f1f1f',
+            font=dict(color='white')
+        )
+
+        return empty_fig, empty_fig
+
+    # -----------------------------------------------------
+    # Check dates
+    # -----------------------------------------------------
+
+    if not start_date or not end_date:
+
+        empty_fig = go.Figure()
+
+        empty_fig.update_layout(
+            title="Please select a valid date range",
             template='plotly_dark',
             paper_bgcolor='#1f1f1f',
             plot_bgcolor='#1f1f1f',
@@ -289,7 +443,7 @@ def update_graph(
         if data is None or data.empty:
 
             print(
-                f"No data for {sym}"
+                f"No valid data for {sym}"
             )
 
             continue
@@ -465,4 +619,9 @@ server = app.server
 # =========================================================
 
 if __name__ == "__main__":
-    app.run(debug=False)
+
+    app.run(
+        host="0.0.0.0",
+        port=8050,
+        debug=False
+    )
