@@ -102,7 +102,7 @@ def download_stock_data(symbol, start_date, end_date):
         print("=" * 60)
 
         # -------------------------------------------------
-        # Make the selected end date inclusive
+        # Make end date inclusive
         # -------------------------------------------------
 
         end_date_obj = pd.to_datetime(end_date) + pd.Timedelta(days=1)
@@ -110,7 +110,7 @@ def download_stock_data(symbol, start_date, end_date):
         end_date_inclusive = end_date_obj.strftime("%Y-%m-%d")
 
         # -------------------------------------------------
-        # Download stock data
+        # Download data
         # -------------------------------------------------
 
         data = yf.download(
@@ -123,36 +123,39 @@ def download_stock_data(symbol, start_date, end_date):
             threads=False
         )
 
-        print(f"Raw data shape for {symbol}: {data.shape}")
+        print(
+            f"Raw data shape for {symbol}: {data.shape}"
+        )
 
         # -------------------------------------------------
-        # Check whether data was returned
+        # Check empty data
         # -------------------------------------------------
 
         if data.empty:
 
-            print(f"No data returned for {symbol}")
+            print(
+                f"No data returned for {symbol}"
+            )
 
             return None
 
         # -------------------------------------------------
-        # Handle MultiIndex columns
+        # Handle MultiIndex
         # -------------------------------------------------
 
         if isinstance(data.columns, pd.MultiIndex):
 
-            print(f"MultiIndex detected for {symbol}")
-            print(f"Original columns: {data.columns}")
+            print(
+                f"MultiIndex detected for {symbol}"
+            )
+
+            print(
+                f"Original columns: {data.columns}"
+            )
 
             try:
 
-                # yfinance may return:
-                #
-                # Close     AAPL
-                # Open      AAPL
-                # High      AAPL
-                #
-                # Extract the ticker level.
+                # Check ticker in last level
 
                 if symbol in data.columns.get_level_values(-1):
 
@@ -168,18 +171,23 @@ def download_stock_data(symbol, start_date, end_date):
 
                 else:
 
-                    # If ticker is not found in the last level,
-                    # use the first level.
+                    # Fall back to first level
 
-                    data.columns = data.columns.get_level_values(0)
+                    data.columns = (
+                        data.columns
+                        .get_level_values(0)
+                    )
 
             except Exception as e:
 
                 print(
-                    f"MultiIndex processing error for {symbol}: {e}"
+                    f"MultiIndex processing error: {e}"
                 )
 
-                data.columns = data.columns.get_level_values(0)
+                data.columns = (
+                    data.columns
+                    .get_level_values(0)
+                )
 
         # -------------------------------------------------
         # Reset index
@@ -196,7 +204,9 @@ def download_stock_data(symbol, start_date, end_date):
             if 'Datetime' in data.columns:
 
                 data.rename(
-                    columns={'Datetime': 'Date'},
+                    columns={
+                        'Datetime': 'Date'
+                    },
                     inplace=True
                 )
 
@@ -207,7 +217,7 @@ def download_stock_data(symbol, start_date, end_date):
                 )
 
                 print(
-                    f"Available columns: {data.columns}"
+                    f"Available columns: {list(data.columns)}"
                 )
 
                 return None
@@ -228,7 +238,7 @@ def download_stock_data(symbol, start_date, end_date):
         )
 
         # -------------------------------------------------
-        # Sort by date
+        # Sort data
         # -------------------------------------------------
 
         data = data.sort_values(
@@ -236,7 +246,7 @@ def download_stock_data(symbol, start_date, end_date):
         )
 
         # -------------------------------------------------
-        # Check Close column
+        # Check Close
         # -------------------------------------------------
 
         if 'Close' not in data.columns:
@@ -246,13 +256,13 @@ def download_stock_data(symbol, start_date, end_date):
             )
 
             print(
-                f"Available columns: {data.columns}"
+                f"Available columns: {list(data.columns)}"
             )
 
             return None
 
         # -------------------------------------------------
-        # Check Volume column
+        # Check Volume
         # -------------------------------------------------
 
         if 'Volume' not in data.columns:
@@ -262,13 +272,13 @@ def download_stock_data(symbol, start_date, end_date):
             )
 
             print(
-                f"Available columns: {data.columns}"
+                f"Available columns: {list(data.columns)}"
             )
 
             return None
 
         # -------------------------------------------------
-        # Convert Close to numeric
+        # Convert Close
         # -------------------------------------------------
 
         data['Close'] = pd.to_numeric(
@@ -276,20 +286,16 @@ def download_stock_data(symbol, start_date, end_date):
             errors='coerce'
         )
 
-        # Fill missing Close values
-
         data['Close'] = data['Close'].ffill()
 
         # -------------------------------------------------
-        # Convert Volume to numeric
+        # Convert Volume
         # -------------------------------------------------
 
         data['Volume'] = pd.to_numeric(
             data['Volume'],
             errors='coerce'
         )
-
-        # Fill missing Volume values
 
         data['Volume'] = data['Volume'].fillna(0)
 
@@ -303,7 +309,7 @@ def download_stock_data(symbol, start_date, end_date):
         ).mean()
 
         # -------------------------------------------------
-        # Final check
+        # Final validation
         # -------------------------------------------------
 
         if data.empty:
@@ -315,7 +321,8 @@ def download_stock_data(symbol, start_date, end_date):
             return None
 
         print(
-            f"SUCCESS: Fetched {symbol}: {len(data)} rows"
+            f"SUCCESS: Fetched {symbol}: "
+            f"{len(data)} rows"
         )
 
         print(
@@ -327,6 +334,10 @@ def download_stock_data(symbol, start_date, end_date):
     except Exception as e:
 
         print(
+            "=" * 60
+        )
+
+        print(
             f"ERROR fetching {symbol}"
         )
 
@@ -336,6 +347,10 @@ def download_stock_data(symbol, start_date, end_date):
 
         print(
             f"Error message: {e}"
+        )
+
+        print(
+            "=" * 60
         )
 
         return None
@@ -362,11 +377,27 @@ def update_graph(
     end_date
 ):
 
+    # =====================================================
+    # CALLBACK DEBUG LOG
+    # =====================================================
+
+    print("")
+    print("=" * 70)
+    print("CALLBACK TRIGGERED")
+    print(f"Stock input: {stock_input}")
+    print(f"Start date: {start_date}")
+    print(f"End date: {end_date}")
+    print("=" * 70)
+
     # -----------------------------------------------------
     # Check stock input
     # -----------------------------------------------------
 
     if not stock_input:
+
+        print(
+            "No stock symbols entered."
+        )
 
         empty_fig = go.Figure()
 
@@ -385,6 +416,10 @@ def update_graph(
     # -----------------------------------------------------
 
     if not start_date or not end_date:
+
+        print(
+            "Invalid date range."
+        )
 
         empty_fig = go.Figure()
 
@@ -408,6 +443,10 @@ def update_graph(
         if s.strip()
     ]
 
+    print(
+        f"Symbols to process: {symbols}"
+    )
+
     # -----------------------------------------------------
     # Create figures
     # -----------------------------------------------------
@@ -429,6 +468,11 @@ def update_graph(
     # -----------------------------------------------------
 
     for i, sym in enumerate(symbols):
+
+        print("")
+        print(
+            f"Processing symbol: {sym}"
+        )
 
         data = download_stock_data(
             sym,
@@ -542,6 +586,10 @@ def update_graph(
 
     if not valid_symbol_found:
 
+        print(
+            "NO VALID SYMBOL DATA FOUND"
+        )
+
         empty_fig = go.Figure()
 
         empty_fig.update_layout(
@@ -603,6 +651,11 @@ def update_graph(
 
         hovermode='x unified'
     )
+
+    print("")
+    print("=" * 70)
+    print("CALLBACK COMPLETED SUCCESSFULLY")
+    print("=" * 70)
 
     return price_fig, volume_fig
 
