@@ -12,6 +12,7 @@ from functools import lru_cache
 # =========================================================
 
 app = dash.Dash(__name__)
+app.enable_dev_tools(debug=False)
 
 
 # =========================================================
